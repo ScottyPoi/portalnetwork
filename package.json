@@ -15,11 +15,14 @@
   "license": "MIT",
   "dependencies": {
     "@chainsafe/discv5": "github:acolytec3/discv5#9b38568381bd02d0733e9cc8304ea50ed75130b6",
+    "@chainsafe/lodestar-types": "^0.31.0",
     "@chainsafe/ssz": "^0.8.19",
     "@types/bn.js": "^5.1.0",
+    "@types/node": "^16.11.6",
     "bn.js": "^5.2.0",
     "debug": "^4.3.2",
-    "tape": "^5.3.1"
+    "tape": "^5.3.1",
+    "utp-native": "^2.5.3"
   },
   "peerDependencies": {
     "bn.js": "^5.2.0"
