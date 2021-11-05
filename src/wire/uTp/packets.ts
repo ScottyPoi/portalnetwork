@@ -102,7 +102,7 @@ export function decodePacket(bytes: Uint8Array): Packet {
 
   let packet: Packet = { header: header, payload: payload };
 
-  return packet
+  return packet;
 }
 
 // # connectionId - should be random not already used number
@@ -110,7 +110,7 @@ export function decodePacket(bytes: Uint8Array): Packet {
 // # SYN packets are special, and should have the receive ID in the connid field,
 // # instead of conn_id_send.
 
-function synPacket(
+export function synPacket(
   seqNr: Uint16,
   rcvConnectionId: Uint16,
   bufferSize: Uint32
@@ -130,56 +130,57 @@ function synPacket(
   };
 
   let packet: Packet = { header: h, payload: new Uint8Array(0) };
-  return packet
+  return packet;
 }
 
-function ackPacket(
+export function ackPacket(
   seqNr: Uint16,
   sndConnectionId: Uint16,
   ackNr: Uint16,
   bufferSize: Uint32
 ): Packet {
-
-    let h: PacketHeaderV1 = {
-        pType: PacketType.ST_STATE,
-        version: protocolVersion,
+  let h: PacketHeaderV1 = {
+    pType: PacketType.ST_STATE,
+    version: protocolVersion,
     // ack packets always have extension field set to 0
-        extension: 0,
-        connectionId: sndConnectionId,
-        timestamp: getMonoTimeTimeStamp(),
-        //     # TODO for not we are using 0, but this value should be calculated on socket
-  //  # level
-        timestampDiff: 0,
-        wndSize: bufferSize,
-        seqNr: seqNr,
-        ackNr: ackNr
-    }
-
+    extension: 0,
+    connectionId: sndConnectionId,
+    timestamp: getMonoTimeTimeStamp(),
+    //     # TODO for not we are using 0, but this value should be calculated on socket
+    //  # level
+    timestampDiff: 0,
+    wndSize: bufferSize,
+    seqNr: seqNr,
+    ackNr: ackNr,
+  };
 
   const packet: Packet = { header: h, payload: new Uint8Array(0) };
-  return packet
+  return packet;
 }
 
-function dataPacket(seqNr: Uint16, sndConnectionId: Uint16, ackNr: Uint16, bufferSize: Uint32, payload: Uint8Array): Packet {
-    let h: PacketHeaderV1 = {
-        pType: PacketType.ST_DATA,
-        version: protocolVersion,
-        //     # data packets always have extension field set to 0
-        extension: 0,
-        connectionId: sndConnectionId,
-        timestamp: getMonoTimeTimeStamp(),
-        //     # TODO for not we are using 0, but this value should be calculated on socket
+export function dataPacket(
+  seqNr: Uint16,
+  sndConnectionId: Uint16,
+  ackNr: Uint16,
+  bufferSize: Uint32,
+  payload: Uint8Array
+): Packet {
+  let h: PacketHeaderV1 = {
+    pType: PacketType.ST_DATA,
+    version: protocolVersion,
+    //     # data packets always have extension field set to 0
+    extension: 0,
+    connectionId: sndConnectionId,
+    timestamp: getMonoTimeTimeStamp(),
+    //     # TODO for not we are using 0, but this value should be calculated on socket
     // # level
-        timestampDiff: 0,
-        wndSize: bufferSize,
-        seqNr: seqNr,
-        ackNr: ackNr
-    }
-    const packet: Packet = { header: h, payload: payload};
-    return packet
+    timestampDiff: 0,
+    wndSize: bufferSize,
+    seqNr: seqNr,
+    ackNr: ackNr,
+  };
+  const packet: Packet = { header: h, payload: payload };
+  return packet;
 }
-
-
-
 
 console.log(ok);
