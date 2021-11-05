@@ -21,8 +21,8 @@
     "@types/node": "^16.11.6",
     "bn.js": "^5.2.0",
     "debug": "^4.3.2",
-    "tape": "^5.3.1",
-    "utp-native": "^2.5.3"
+    "tape": "^5.3.1"
+
   },
   "peerDependencies": {
     "bn.js": "^5.2.0"
