@@ -1,7 +1,7 @@
 import { Uint16, Uint32, Uint8 } from "@chainsafe/lodestar-types";
 import { hrtime } from "process";
 import { Stream, Writable } from "stream";
-import { ok } from "assert";
+import { ok, rejects } from "assert";
 
 const minimalHeaderSize = 20;
 const protocolVersion = 1;
@@ -33,12 +33,12 @@ export type Packet = {
   payload: Uint8Array;
 };
 
-export function getMonoTimeTimeStamp(): Uint32 {
+export function getMonoTimeStamp(): Uint32 {
   let time = hrtime.bigint();
   return Number(time / BigInt(1000)) as Uint32;
 }
 
-console.log(getMonoTimeTimeStamp());
+console.log(getMonoTimeStamp());
 
 export function randUint16(): Uint16 {
   return (Math.random() * 2 ** 16) as Uint16;
@@ -121,7 +121,7 @@ export function synPacket(
     // # TODO for we do not handle extensions
     extension: 0,
     connectionId: rcvConnectionId,
-    timestamp: getMonoTimeTimeStamp(),
+    timestamp: getMonoTimeStamp(),
     timestampDiff: 0,
     wndSize: bufferSize,
     seqNr: seqNr,
@@ -145,7 +145,7 @@ export function ackPacket(
     // ack packets always have extension field set to 0
     extension: 0,
     connectionId: sndConnectionId,
-    timestamp: getMonoTimeTimeStamp(),
+    timestamp: getMonoTimeStamp(),
     //     # TODO for not we are using 0, but this value should be calculated on socket
     //  # level
     timestampDiff: 0,
@@ -171,7 +171,7 @@ export function dataPacket(
     //     # data packets always have extension field set to 0
     extension: 0,
     connectionId: sndConnectionId,
-    timestamp: getMonoTimeTimeStamp(),
+    timestamp: getMonoTimeStamp(),
     //     # TODO for not we are using 0, but this value should be calculated on socket
     // # level
     timestampDiff: 0,
@@ -183,4 +183,3 @@ export function dataPacket(
   return packet;
 }
 
-console.log(ok);
