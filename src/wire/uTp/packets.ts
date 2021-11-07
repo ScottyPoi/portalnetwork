@@ -55,9 +55,8 @@ export function encodeTypeVer(h: PacketHeaderV1): Uint8 {
   return typeVer;
 }
 
-type OutputStream = typeof Stream.Writable;
-
-export function encodeHeaderStream(s: Writable, h: PacketHeaderV1) {
+var OutputStream = new Stream.Duplex()
+export function encodeHeaderStream(s: typeof OutputStream, h: PacketHeaderV1) {
   try {
     s.write(encodeTypeVer(h));
     s.write(h.extension);
@@ -70,6 +69,15 @@ export function encodeHeaderStream(s: Writable, h: PacketHeaderV1) {
   } catch (error) {
     console.error(error);
   }
+}
+
+export function encodePacket(p: Packet): Uint8Array {
+    let s = OutputStream
+    encodeHeaderStream(s, p.header)
+    if (p.payload.length > 0) {
+        s.write(p.payload)
+    }
+    return s.read()
 }
 
 // # TODO for now we do not handle extensions
