@@ -1,14 +1,4 @@
-export function bitLength(n: number): number {
-  const bitstring = n.toString(2);
-  if (bitstring === "0") {
-    return 0;
-  }
-  return bitstring.length;
-}
-
-export function nextPowerOf2(n: number): number {
-  return n <= 0 ? 1 : Math.pow(2, bitLength(n - 1));
-}
+import { nextPowerOf2 } from "./math";
 
 export interface IOptionOptions<T> {
   has: boolean;
@@ -23,41 +13,39 @@ export class Option<T> {
     this.has = options.has;
     this.value = options.value;
   }
-  
-  
+
   get(): T {
-        return this.value as T;
-    }
-    
-    unsafeGet(): T {
-        return this.value as T;
-    }
-    
-    isSome(): boolean {
+    return this.value as T;
+  }
+
+  unsafeGet(): T {
+    return this.value as T;
+  }
+
+  isSome(): boolean {
     return this.has;
-}
+  }
 
-isNone(): boolean {
+  isNone(): boolean {
     return !this.has;
-}
+  }
 
-either(otherwise: T): T {
+  either(otherwise: T): T {
     return this.has && this.value ? this.value : otherwise;
-}
-
+  }
 }
 
 function none<T>(kind?: TypedPropertyDescriptor<T>): Option<T> {
-    return new Option({ has: false });
-  }
+  return new Option({ has: false });
+}
 
 function some<T>(value: T): Option<T> {
-      return new Option<T>({ has: true, value: value });
-  }
+  return new Option<T>({ has: true, value: value });
+}
 
 export interface IGCBOptions<A> {
-    items?: Option<A>[];
-    mask?: number;
+  items?: Option<A>[];
+  mask?: number;
 }
 export class GrowableCircularBuffer<A> {
   items: Option<A>[];
@@ -147,7 +135,7 @@ export class GrowableCircularBuffer<A> {
   }
 }
 
-export function init<A>(size: number = 16): GrowableCircularBuffer<A> {
+export function init_GCB<A>(size: number = 16): GrowableCircularBuffer<A> {
   let powOfTwoSize = nextPowerOf2(size);
   let gcb: GrowableCircularBuffer<A> = new GrowableCircularBuffer({
     items: new Array<Option<A>>(size),

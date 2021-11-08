@@ -1,52 +1,10 @@
 import { Uint16, Uint32, Uint8 } from "@chainsafe/lodestar-types";
-import { hrtime } from "process";
-import { Stream, Writable } from "stream";
-import { ok, rejects } from "assert";
+import internal, { Stream, Writable } from "stream";
+import {minimalHeaderSize, protocolVersion, PacketType, MicroSeconds, PacketHeaderV1, IPacketOptions} from './PacketTyping'
+import {getMonoTimeStamp, randUint16, randUint32} from '../math';
+import { IOutgoingPacket, Moment } from "../utp_socket/utp_socket_typing";
 
-const minimalHeaderSize = 20;
-const protocolVersion = 1;
-
-export enum PacketType {
-  ST_DATA = 0,
-  ST_FIN = 1,
-  ST_STATE = 2,
-  ST_RESET = 3,
-  ST_SYN = 4,
-}
-
-export type MicroSeconds = Uint32;
-
-export type PacketHeaderV1 = {
-  pType: PacketType;
-  version: Uint8;
-  extension: Uint8;
-  connectionId: Uint16;
-  timestamp: MicroSeconds;
-  timestampDiff: MicroSeconds;
-  wndSize: Uint32;
-  seqNr: Uint16;
-  ackNr: Uint16;
-};
-
-export type Packet = {
-  header: PacketHeaderV1;
-  payload: Uint8Array;
-};
-
-export function getMonoTimeStamp(): Uint32 {
-  let time = hrtime.bigint();
-  return Number(time / BigInt(1000)) as Uint32;
-}
-
-console.log(getMonoTimeStamp());
-
-export function randUint16(): Uint16 {
-  return (Math.random() * 2 ** 16) as Uint16;
-}
-export function randUint32(): Uint16 {
-  return (Math.random() * 2 ** 32) as Uint16;
-}
-
+let OutputStream: internal.Duplex = new Stream.Duplex()
 export function encodeTypeVer(h: PacketHeaderV1): Uint8 {
   let typeVer: Uint8 = 0;
   let typeOrd: Uint8 = h.pType;
@@ -54,34 +12,60 @@ export function encodeTypeVer(h: PacketHeaderV1): Uint8 {
   typeVer = (typeVer & 0xf) | (typeOrd << 4);
   return typeVer;
 }
-
-var OutputStream = new Stream.Duplex()
-export function encodeHeaderStream(s: typeof OutputStream, h: PacketHeaderV1) {
+export function encodeHeaderStream(h: PacketHeaderV1) {
   try {
-    s.write(encodeTypeVer(h));
-    s.write(h.extension);
-    s.write(h.connectionId.toString(16));
-    s.write(h.timestamp.toString(16));
-    s.write(h.timestampDiff.toString(16));
-    s.write(h.wndSize.toString(16));
-    s.write(h.seqNr.toString(16));
-    s.write(h.ackNr.toString(16));
-  } catch (error) {
-    console.error(error);
+      OutputStream.write(encodeTypeVer(h));
+      OutputStream.write(h.extension);
+      
+      OutputStream.write(h.connectionId.toString(16));
+      OutputStream.write(h.timestamp.toString(16));
+      OutputStream.write(h.timestampDiff.toString(16));
+      OutputStream.write(h.wndSize.toString(16));
+      OutputStream.write(h.seqNr.toString(16));
+      OutputStream.write(h.ackNr.toString(16));
+    } catch (error) {
+      console.error(error);
+    }
   }
-}
+export class Packet {
+  header: PacketHeaderV1;
+  payload: Uint8Array;
+  constructor(options: IPacketOptions) {
+    this.header = options.header;
+    this.payload = options.payload;
+  }
 
-export function encodePacket(p: Packet): Uint8Array {
+  encodePacket(): Uint8Array {
     let s = OutputStream
-    encodeHeaderStream(s, p.header)
-    if (p.payload.length > 0) {
-        s.write(p.payload)
+    encodeHeaderStream(this.header)
+    if (this.payload.length > 0) {
+        s.write(this.payload)
     }
     return s.read()
 }
+};
 
+
+export class OutgoingPacket {
+  packetBytes: Uint8Array;
+  transmissions: Uint16;
+  needResend: boolean;
+  timeSent: Moment;
+  constructor(options: IOutgoingPacket) {
+    this.packetBytes = options.packetBytes;
+    this.transmissions = options.transmissions;
+    this.needResend = options.needResend;
+    this.timeSent = options.timeSent;
+  }
+  // # Should be called before sending packet
+  setSend(): Uint8Array {
+    this.transmissions++;
+    this.needResend = false;
+    this.timeSent = Date.now();
+    return this.packetBytes;
+  }
+}
 // # TODO for now we do not handle extensions
-
 export function decodePacket(bytes: Uint8Array): Packet {
   if (bytes.length < minimalHeaderSize) {
     console.error("invalid header size");
@@ -108,7 +92,7 @@ export function decodePacket(bytes: Uint8Array): Packet {
 
   let payload = bytes.length == 20 ? new Uint8Array(0) : bytes.subarray(20);
 
-  let packet: Packet = { header: header, payload: payload };
+  let packet: Packet = new Packet({ header: header, payload: payload });
 
   return packet;
 }
@@ -137,7 +121,7 @@ export function synPacket(
     ackNr: 0,
   };
 
-  let packet: Packet = { header: h, payload: new Uint8Array(0) };
+  let packet: Packet = new Packet({ header: h, payload: new Uint8Array(0) });
   return packet;
 }
 
@@ -162,7 +146,7 @@ export function ackPacket(
     ackNr: ackNr,
   };
 
-  const packet: Packet = { header: h, payload: new Uint8Array(0) };
+  const packet: Packet = new Packet({ header: h, payload: new Uint8Array(0) });
   return packet;
 }
 
@@ -176,18 +160,18 @@ export function dataPacket(
   let h: PacketHeaderV1 = {
     pType: PacketType.ST_DATA,
     version: protocolVersion,
-    //     # data packets always have extension field set to 0
     extension: 0,
     connectionId: sndConnectionId,
     timestamp: getMonoTimeStamp(),
-    //     # TODO for not we are using 0, but this value should be calculated on socket
-    // # level
     timestampDiff: 0,
     wndSize: bufferSize,
     seqNr: seqNr,
     ackNr: ackNr,
   };
-  const packet: Packet = { header: h, payload: payload };
+  const packet: Packet = new Packet({ header: h, payload: payload });
   return packet;
 }
 
+
+
+export * from './PacketTyping';
