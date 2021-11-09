@@ -34,3 +34,5 @@ export function getMonoTimeStamp(): Uint32 {
   export function max(a: number, b: Duration): Duration {
     return a > b ? a : b;
   }
+
+  

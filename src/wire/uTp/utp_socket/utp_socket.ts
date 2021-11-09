@@ -1,12 +1,7 @@
 import { Uint16, Uint32 } from "@chainsafe/lodestar-types";
 import assert from "assert";
 import { inspect } from "util";
-import {
-  GrowableCircularBuffer,
-  IGCBOptions,
-  init_GCB,
-  Option,
-} from "../growableBuffer";
+import { GrowableCircularBuffer, Option } from "../growableBuffer";
 import {
   MicroSeconds,
   Packet,
@@ -14,29 +9,25 @@ import {
   ackPacket,
   PacketType,
   dataPacket,
-  OutgoingPacket,
 } from "../Packets/packets";
-import { getMonoTimeStamp, max, randUint16, randUint32, sleep } from "../math";
-
+import { OutgoingPacket } from "../Packets/OutgoingPacket";
+import { max, sleep } from "../math";
 import {
-  IOutgoingPacket,
   Moment,
   ConnectionDirection,
   ConnectionState,
   SocketConfig,
   Duration,
-  UtpSocketKey,
   SendCallback,
   IUtpSocket,
   checkTimeoutsLoopInterval,
-  Miliseconds,
-  defaultInitialSynTimeout,
-  defaultDataResendsBeforeFailure,
   AckResult,
   reorderBufferMaxSize,
   IBody,
   mtuSize,
+  SocketCloseCallBack,
 } from "./utp_socket_typing";
+import { UtpSocketKey } from "./UtpSocketKey";
 
 export class UtpSocket<A> {
   remoteAddress: A;
@@ -61,8 +52,8 @@ export class UtpSocket<A> {
   checkTimeoutsLoop?: Promise<void>;
   retransmitCount: Uint32;
   closeEvent: CloseEvent;
-  closeCallbacks?: Promise<void>[];
-  socketKey?: UtpSocketKey<A>;
+  closeCallbacks: Promise<void>[];
+  socketKey: UtpSocketKey<A>;
   send: SendCallback<A>;
 
   constructor(options: IUtpSocket<A>) {
@@ -93,8 +84,8 @@ export class UtpSocket<A> {
     this.checkTimeoutsLoop = options.checkTimeoutsLoop;
     this.retransmitCount = options.retransmitCount || 0;
     this.closeEvent = options.closeEvent || new CloseEvent("close");
-    this.closeCallbacks = options.closeCallbacks;
-    this.socketKey = options.socketKey;
+    this.closeCallbacks = options.closeCallbacks || [];
+    this.socketKey = options.socketKey || new UtpSocketKey({remoteAddress: this.remoteAddress})
     this.send = options.send;
   }
   isOpened(): boolean {
@@ -117,14 +108,14 @@ export class UtpSocket<A> {
   async waitForSocketToConnect(): Promise<void> {
     await this.connectionFuture;
   }
-  
+
   async startIncomingSocket() {
     assert(this.state == ConnectionState.SynRecv);
     //   # Make sure ack was flushed before movig forward
     await this.sendAck();
-    startTimeoutLoop(this);
+    this.startTimeoutLoop();
   }
-  
+
   isConnected<A>(): boolean {
     return (
       this.state == ConnectionState.Connected ||
@@ -178,7 +169,7 @@ export class UtpSocket<A> {
     }
   }
 
-  ackPackets(nrPacketsToAck: Uint16) {
+  ackPackets(nrPacketsToAck: Uint16): void {
     // ## Ack packets in outgoing buffer based on ack number in the received packet
     var i = 0;
     while (i < nrPacketsToAck) {
@@ -192,7 +183,7 @@ export class UtpSocket<A> {
     }
   }
 
-  initializeAckNr(packetSeqNr: Uint16) {
+  initializeAckNr(packetSeqNr: Uint16): void {
     if (this.state == ConnectionState.SynSent) {
       this.ackNr = packetSeqNr - 1;
     }
@@ -207,12 +198,17 @@ export class UtpSocket<A> {
     console.log(`Sending syn packet ${packet}`);
     //   # set number of transmissions to 1 as syn packet will be send just after
     //   # initiliazation
-    let outgoingPacket = init_OutgoingPacket(packet.encodePacket(), 1, false);
+    let outgoingPacket = new OutgoingPacket({
+      packetBytes: packet.encodePacket(),
+      transmissions: 1,
+      needResend: false,
+      timeSent: Date.now(),
+    });
     this.registerOutgoingPacket(outgoingPacket);
     return this.sendData(outgoingPacket.packetBytes);
   }
 
-  async flushPackets() {
+  async flushPackets(): Promise<void> {
     var i: Uint16 = this.seqNr - this.curWindowPackets;
     while (i != this.seqNr) {
       // # sending only packet which were not transmitted yet or need a resend
@@ -227,7 +223,7 @@ export class UtpSocket<A> {
       i++;
     }
   }
-  markAllPacketAsLost() {
+  markAllPacketAsLost(): void {
     var i = 0 as Uint16;
     while (i < this.curWindowPackets) {
       let packetSeqNr = this.seqNr - 1 - i;
@@ -252,14 +248,6 @@ export class UtpSocket<A> {
     );
   }
 
-  // close() {
-  // //   # TODO Rething all this when working on FIN packets and proper handling
-  // //   # of resources
-  //   this.state = ConnectionState.Destroy
-  //   this.checkTimeoutsLoop.cancel()
-  //   this.closeEvent.fire()
-  // }
-
   async checkTimeouts() {
     let currentTime = Date.now();
     //   # flush all packets which needs to be re-send
@@ -275,19 +263,24 @@ export class UtpSocket<A> {
 
         //   # client initiated connections, but did not send following data packet in rto
         //   # time. TODO this should be configurable
-        //   if (this.state == ConnectionState.SynRecv) {
-        //     this.close()
-        //     return }
+        if (this.state == ConnectionState.SynRecv) {
+          this.close();
+          return;
+        }
 
-        //   if (this.shouldDisconnectFromFailedRemote()) {
-        //     if (this.state == ConnectionState.SynSent && (inspect(this.connectionFuture).includes('pending')))
-
-        //     //   # TODO standard stream interface result in failed future in case of failed connections,
-        //     //   # but maybe it would be more clean to use result
-        //       this.connectionFuture.fail(newException(ConnectionError, "Connection to peer timed out"))
-
-        //     this.close()
-        //     return}
+        if (this.shouldDisconnectFromFailedRemote()) {
+          if (
+            this.state == ConnectionState.SynSent &&
+            inspect(this.connectionFuture).includes("pending")
+          )
+            //   # TODO standard stream interface result in failed future in case of failed connections,
+            //   # but maybe it would be more clean to use result
+            this.connectionFuture = Promise.reject(
+              "Connection to Peer timed out"
+            );
+          this.close();
+          return;
+        }
 
         let newTimeout = this.retransmitTimeout * 2;
         this.retransmitTimeout = newTimeout;
@@ -321,11 +314,6 @@ export class UtpSocket<A> {
       }
   }
   updateTimeouts<A>(timeSent: Moment, currentTime: Moment): void {
-    //   ## Update timeouts according to spec:
-    //   ## delta = rtt - packet_rtt
-    //   ## rtt_var += (abs(delta) - rtt_var) / 4;
-    //   ## rtt += (packet_rtt - rtt) / 8;
-
     let packetRtt = currentTime - timeSent;
 
     if (this.rtt == 0) {
@@ -401,7 +389,12 @@ export class UtpSocket<A> {
         dataSlice
       );
       this.registerOutgoingPacket(
-        init_OutgoingPacket(_dataPacket.encodePacket(), 0, false)
+        new OutgoingPacket({
+          packetBytes: _dataPacket.encodePacket(),
+          transmissions: 0,
+          needResend: false,
+          timeSent: Date.now(),
+        })
       );
       bytesWritten = bytesWritten + dataSlice.length;
       i = lastOrEnd + 1;
@@ -457,7 +450,165 @@ export class UtpSocket<A> {
       return num;
     }
   }
+
+  async startOutgoingSocket(): Promise<void> {
+    assert(this.state == ConnectionState.SynSent);
+    //   # TODO add callback to handle errors and cancellation i.e unregister socket on
+    //   # send error and finish connection future with failure
+    //   # sending should be done from UtpSocketContext
+    await this.sendSyn();
+    this.startTimeoutLoop();
+  }
+
+  async processPacket(p: Packet) {
+    // ## Updates socket state based on received packet, and sends ack when necessary.
+    let pkSeqNr = p.header.seqNr;
+    let pkAckNr = p.header.ackNr;
+    this.initializeAckNr(pkSeqNr);
+    // # number of packets past the expected
+    // # ack_nr is the last acked, seq_nr is the
+    // # current. Subtracring 1 makes 0 mean "this is the next expected packet"
+    let pastExpected = pkSeqNr - this.ackNr - 1;
+    // # acks is the number of packets that was acked, in normal case - no selective
+    // # acks, no losses, no resends, it will usually be equal to 1
+    // # we can calculate it here and not only for ST_STATE packet, as each utp
+    // # packet has info about remote side last acked packet.
+    var acks = pkAckNr - (this.seqNr - 1 - this.curWindowPackets);
+    if (acks > this.curWindowPackets) {
+      // # this case happens if the we already received this ack nr
+      acks = 0;
+    }
+    // # If packet is totally off the mark short circout the processing
+    if (pastExpected >= reorderBufferMaxSize) {
+      console.log("Received packet is totally off the mark");
+      return;
+    }
+    this.ackPackets(acks);
+    if (p.header.pType == PacketType.ST_DATA) {
+      // # To avoid amplification attacks, server socket is in SynRecv state until
+      // # it receices first data transfer
+      // # https://www.usenix.org/system/files/conference/woot15/woot15-paper-adamsky.pdf
+      // # TODO when intgrating with discv5 this need to be configurable
+      if (this.state == ConnectionState.SynRecv) {
+        this.state = ConnectionState.Connected;
+        console.log("Received ST_DATA on known socket");
+        if (pastExpected == 0) {
+          // # we are getting in order data packet, we can flush data directly to the incoming buffer
+          this.buffer?.write(p.payload[0].toString(16));
+          // # Bytes have been passed to upper layer, we can increase number of last
+          // # acked packet
+          this.ackNr++;
+          // # check if the following packets are in reorder buffer
+          while (true) {
+            if (this.reorderCount == 0) {
+              break;
+            }
+            // # TODO Handle case when we have reached eof becouse of fin packet
+            let nextPacketNum = this.ackNr + 1;
+            let maybePacket = this.inBuffer.get(nextPacketNum);
+            if (maybePacket.isNone()) {
+              break;
+            }
+            let packet = maybePacket.unsafeGet();
+            this.buffer?.write(p.payload[0].toString(16));
+
+            this.inBuffer.delete(nextPacketNum);
+
+            this.ackNr++;
+            this.reorderCount--;
+
+            // # TODO for now we just schedule concurrent task with ack sending. It may
+            // # need improvement, as with this approach there is no direct control over
+            // # how many concurrent tasks there are and how to cancel them when socket
+            // # is closed
+            this.sendAck();
+          }
+        } else {
+          // # TODO Handle case when out of order is out of eof range
+          console.log("Got out of order packet");
+
+          // # growing buffer before checking the packet is already there to avoid
+          // # looking at older packet due to indices wrap aroud
+          this.inBuffer.ensureSize(pkSeqNr + 1, pastExpected + 1);
+
+          if (this.inBuffer.get(pkSeqNr).isSome()) {
+            console.log("packet already received");
+          } else {
+            this.inBuffer.put(pkSeqNr, p);
+            this.reorderCount++;
+            console.log("added out of order packet in reorder buffer");
+            // # TODO for now we do not sent any ack as we do not handle selective acks
+            // # add sending of selective acks
+          }
+        }
+      }
+    } else if (p.header.pType == PacketType.ST_FIN) {
+      // # TODO not implemented
+      console.log("Received ST_FIN on known socket");
+    } else if (p.header.pType == PacketType.ST_STATE) {
+      console.log("Received ST_STATE on known socket");
+
+      if (
+        this.state == ConnectionState.SynSent &&
+        inspect(this.connectionFuture).includes("pending")
+      ) {
+        this.state = ConnectionState.Connected;
+        // # TODO reference implementation sets ackNr (p.header.seqNr - 1), although
+        // # spec mention that it should be equal p.header.seqNr. For now follow the
+        // # reference impl to be compatible with it. Later investigate trin compatibility.
+        this.ackNr = p.header.seqNr - 1;
+        // # In case of SynSent complate the future as last thing to make sure user of libray will
+        // # receive socket in correct state
+        Promise.resolve(this.connectionFuture);
+        // # TODO to finish handhske we should respond with ST_DATA packet, without it
+        // # socket is left in half-open state.
+        // # Actual reference implementation waits for user to send data, as it assumes
+        // # existence of application level handshake over utp. We may need to modify this
+        // # to automaticly send ST_DATA .
+      }
+    } else if ((p.header.pType = PacketType.ST_RESET)) {
+      // # TODO not implemented
+      console.log("Received ST_RESET on known socket");
+    } else if ((p.header.pType = PacketType.ST_SYN)) {
+      // # TODO not implemented
+      console.log("Received ST_SYN on known socket");
+    }
+  }
+
+  close() {
+    //   # TODO Rething all this when working on FIN packets and proper handling
+    //   # of resources
+    this.state = ConnectionState.Destroy;
+    this.checkTimeoutsLoop = Promise.reject<void>();
+    this.closeEvent.stopPropagation();
+  }
+
+  async closeWait(): Promise<void> {
+    // # TODO Rething all this when working on FIN packets and proper handling
+    // # of resources
+    this.close();
+    await Promise.allSettled(this.closeCallbacks);
+  }
+
+  async setCloseCallback(cb: SocketCloseCallBack): Promise<void> {
+    // ## Set callback which will be called whenever the socket is permanently closed
+    try {
+      assert(this.closeEvent);
+      cb();
+    } catch (CancelledError) {
+      console.log("closeCallback cancelled");
+    }
+  }
+
+  registerCloseCallback(cb: SocketCloseCallBack) {
+    this.closeCallbacks.push(this.setCloseCallback(cb));
+  }
+
+  startTimeoutLoop(): void {
+    this.checkTimeoutsLoop = checkTimeoutsLoop(this);
+  }
 }
+
 async function checkTimeoutsLoop<A>(socket: UtpSocket<A>): Promise<void> {
   //   ## Loop that check timeoutsin the socket.
   try {
@@ -467,248 +618,5 @@ async function checkTimeoutsLoop<A>(socket: UtpSocket<A>): Promise<void> {
     }
   } catch (error) {
     console.log("checkTimeoutsLoop canceled");
-  }
-}
-
-export function init_UtpSocketKey<A>(
-  remoteAddress: A,
-  rcvId: Uint16
-): UtpSocketKey<A> {
-  return new UtpSocketKey({ remoteAddress: remoteAddress, rcvId: rcvId });
-}
-
-export function init_OutgoingPacket(
-  packetBytes: Uint8Array,
-  transmissions: Uint16,
-  needResend: boolean,
-  timeSent: Moment = Date.now()
-): OutgoingPacket {
-  return new OutgoingPacket({
-    packetBytes: packetBytes,
-    transmissions: transmissions,
-    needResend: needResend,
-    timeSent: timeSent,
-  });
-}
-
-export function init_SocketConfig(
-  initialSynTimeout: Duration = defaultInitialSynTimeout,
-  dataResendsBeforeFailure: Uint16 = defaultDataResendsBeforeFailure
-): SocketConfig {
-  return {
-    initialSynTimeout: initialSynTimeout,
-    dataResendsBeforeFailure: dataResendsBeforeFailure,
-  };
-}
-
-export function startTimeoutLoop<A>(s: UtpSocket<A>): void {
-  s.checkTimeoutsLoop = checkTimeoutsLoop(s);
-}
-
-
-
-export function initOutgoingSocket<A>(
-  to: A,
-  snd: SendCallback<A>,
-  cfg: SocketConfig
-  //   rng: BrHmacDrbgContext
-): UtpSocket<A> {
-  //   # TODO handle possible clashes and overflows
-  let rcvConnectionId = randUint16();
-  let sndConnectionId = rcvConnectionId + 1;
-  let initialSeqNr = randUint16();
-
-  return new UtpSocket<A>({
-    remoteAddress: to,
-    send: snd,
-    state: ConnectionState.SynSent,
-    socketConfig: cfg,
-    direction: ConnectionDirection.Outgoing,
-    connectionIdRcv: rcvConnectionId,
-    connectionIdSnd: sndConnectionId,
-    seqNr: initialSeqNr,
-    // # Initialy ack nr is 0, as we do not know remote inital seqnr
-    ackNr: 0,
-  });
-}
-
-export function initIncomingSocket<A>(
-  to: A,
-  snd: SendCallback<A>,
-  cfg: SocketConfig,
-  connectionId: Uint16,
-  ackNr: Uint16
-  //   rng: var BrHmacDrbgContext
-): UtpSocket<A> {
-  let initialSeqNr = randUint16();
-  return new UtpSocket<A>({
-    remoteAddress: to,
-    send: snd,
-    state: ConnectionState.SynRecv,
-    socketConfig: cfg,
-    direction: ConnectionDirection.Ingoing,
-    connectionIdRcv: connectionId,
-    connectionIdSnd: connectionId,
-    seqNr: initialSeqNr,
-    ackNr: ackNr,
-  });
-}
-
-export async function startOutgoingSocket<A>(socket: UtpSocket<A>): Promise<void> {
-  assert(socket.state == ConnectionState.SynSent);
-  //   # TODO add callback to handle errors and cancellation i.e unregister socket on
-  //   # send error and finish connection future with failure
-  //   # sending should be done from UtpSocketContext
-  await socket.sendSyn();
-  startTimeoutLoop(socket);
-}
-
-
-
-// function close<A>(s: UtpSocket<A>) {
-// //   # TODO Rething all this when working on FIN packets and proper handling
-// //   # of resources
-//   s.state = ConnectionState.Destroy
-//   s.checkTimeoutsLoop.
-//   s.closeEvent.fire()
-// }
-
-// proc closeWait*(s: UtpSocket) {.async.} =
-//   # TODO Rething all this when working on FIN packets and proper handling
-//   # of resources
-//   s.close()
-//   await allFutures(s.closeCallbacks)
-
-// proc setCloseCallback(s: UtpSocket, cb: SocketCloseCallback) {.async.} =
-//   ## Set callback which will be called whenever the socket is permanently closed
-//   try:
-//     await s.closeEvent.wait()
-//     cb()
-//   except CancelledError:
-//     trace "closeCallback cancelled"
-
-// proc registerCloseCallback*(s: UtpSocket, cb: SocketCloseCallback) =
-//   s.closeCallbacks.add(s.setCloseCallback(cb))
-
-
-
-// # TODO at socket level we should handle only FIN/DATA/ACK packets. Refactor to make
-// # it enforcable by type system
-// # TODO re-think synchronization of this procedure, as each await inside gives control
-// # to scheduler which means there could be potentialy several processPacket procs
-// # running
-async function processPacket<A>(socket: UtpSocket<A>, p: Packet) {
-  // ## Updates socket state based on received packet, and sends ack when necessary.
-  // ## Shoyuld be called in main packet receiving loop
-  let pkSeqNr = p.header.seqNr;
-  let pkAckNr = p.header.ackNr;
-  socket.initializeAckNr(pkSeqNr);
-  // # number of packets past the expected
-  // # ack_nr is the last acked, seq_nr is the
-  // # current. Subtracring 1 makes 0 mean "this is the next expected packet"
-  let pastExpected = pkSeqNr - socket.ackNr - 1;
-  // # acks is the number of packets that was acked, in normal case - no selective
-  // # acks, no losses, no resends, it will usually be equal to 1
-  // # we can calculate it here and not only for ST_STATE packet, as each utp
-  // # packet has info about remote side last acked packet.
-  var acks = pkAckNr - (socket.seqNr - 1 - socket.curWindowPackets);
-  if (acks > socket.curWindowPackets) {
-    // # this case happens if the we already received this ack nr
-    acks = 0;
-  }
-  // # If packet is totally off the mark short circout the processing
-  if (pastExpected >= reorderBufferMaxSize) {
-    console.log("Received packet is totally off the mark");
-    return;
-  }
-  socket.ackPackets(acks);
-  if (p.header.pType == PacketType.ST_DATA) {
-    // # To avoid amplification attacks, server socket is in SynRecv state until
-    // # it receices first data transfer
-    // # https://www.usenix.org/system/files/conference/woot15/woot15-paper-adamsky.pdf
-    // # TODO when intgrating with discv5 this need to be configurable
-    if (socket.state == ConnectionState.SynRecv) {
-      socket.state = ConnectionState.Connected;
-      console.log("Received ST_DATA on known socket");
-      if (pastExpected == 0) {
-        // # we are getting in order data packet, we can flush data directly to the incoming buffer
-        socket.buffer?.write(p.payload[0].toString(16));
-        // # Bytes have been passed to upper layer, we can increase number of last
-        // # acked packet
-        socket.ackNr++;
-        // # check if the following packets are in reorder buffer
-        while (true) {
-          if (socket.reorderCount == 0) {
-            break;
-          }
-          // # TODO Handle case when we have reached eof becouse of fin packet
-          let nextPacketNum = socket.ackNr + 1;
-          let maybePacket = socket.inBuffer.get(nextPacketNum);
-          if (maybePacket.isNone()) {
-            break;
-          }
-          let packet = maybePacket.unsafeGet();
-          socket.buffer?.write(p.payload[0].toString(16));
-
-          socket.inBuffer.delete(nextPacketNum);
-
-          socket.ackNr++;
-          socket.reorderCount--;
-
-          // # TODO for now we just schedule concurrent task with ack sending. It may
-          // # need improvement, as with this approach there is no direct control over
-          // # how many concurrent tasks there are and how to cancel them when socket
-          // # is closed
-          socket.sendAck();
-        }
-      } else {
-        // # TODO Handle case when out of order is out of eof range
-        console.log("Got out of order packet");
-
-        // # growing buffer before checking the packet is already there to avoid
-        // # looking at older packet due to indices wrap aroud
-        socket.inBuffer.ensureSize(pkSeqNr + 1, pastExpected + 1);
-
-        if (socket.inBuffer.get(pkSeqNr).isSome()) {
-          console.log("packet already received");
-        } else {
-          socket.inBuffer.put(pkSeqNr, p);
-          socket.reorderCount++;
-          console.log("added out of order packet in reorder buffer");
-          // # TODO for now we do not sent any ack as we do not handle selective acks
-          // # add sending of selective acks
-        }
-      }
-    }
-  } else if (p.header.pType == PacketType.ST_FIN) {
-    // # TODO not implemented
-    console.log("Received ST_FIN on known socket");
-  } else if (p.header.pType == PacketType.ST_STATE) {
-    console.log("Received ST_STATE on known socket");
-
-    if (
-      socket.state == ConnectionState.SynSent &&
-      inspect(socket.connectionFuture).includes("pending")
-    ) {
-      socket.state = ConnectionState.Connected;
-      // # TODO reference implementation sets ackNr (p.header.seqNr - 1), although
-      // # spec mention that it should be equal p.header.seqNr. For now follow the
-      // # reference impl to be compatible with it. Later investigate trin compatibility.
-      socket.ackNr = p.header.seqNr - 1;
-      // # In case of SynSent complate the future as last thing to make sure user of libray will
-      // # receive socket in correct state
-      Promise.resolve(socket.connectionFuture);
-      // # TODO to finish handhske we should respond with ST_DATA packet, without it
-      // # socket is left in half-open state.
-      // # Actual reference implementation waits for user to send data, as it assumes
-      // # existence of application level handshake over utp. We may need to modify this
-      // # to automaticly send ST_DATA .
-    }
-  } else if ((p.header.pType = PacketType.ST_RESET)) {
-    // # TODO not implemented
-    console.log("Received ST_RESET on known socket");
-  } else if ((p.header.pType = PacketType.ST_SYN)) {
-    // # TODO not implemented
-    console.log("Received ST_SYN on known socket");
   }
 }

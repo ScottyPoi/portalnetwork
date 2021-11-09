@@ -1,21 +1,15 @@
 import { Uint16, Uint32 } from "@chainsafe/lodestar-types";
-import assert from "assert";
-import { inspect } from "util";
-import { GrowableCircularBuffer, IGCBOptions, init_GCB, Option } from "../growableBuffer";
-import {MicroSeconds} from '../Packets/PacketTyping'
-import {
-  Packet,
-} from "../Packets/packets";
-import {getMonoTimeStamp, randUint16, randUint32} from '../math';
-import { OutgoingPacket } from "../Packets/packets";
-
+import { GrowableCircularBuffer } from "../growableBuffer";
+import { Packet } from "../Packets/packets";
+import { OutgoingPacket } from "../Packets/OutgoingPacket";
+import { UtpSocketKey } from "./UtpSocketKey";
 
 export const reorderBufferMaxSize: number = 1024;
 //   # Maximal number of payload bytes per packet. Total packet size will be equal to
 //   # mtuSize + sizeof(header) = 600 bytes
 //   # TODO for now it is just some random value. Ultimatly this value should be dynamically
 //   # adjusted based on traffic.
- export const mtuSize: number = 580;
+export const mtuSize: number = 580;
 //   # How often each socket check its different on going timers
 export const checkTimeoutsLoopInterval: number = 500;
 //   # Defualt initial timeout for first Syn packet
@@ -44,17 +38,8 @@ export enum ConnectionDirection {
 }
 
 export interface IUtpSocketKeyOptions<A> {
-  remoteAddress: A;
-  rcvId: Uint16;
-}
-
-export class UtpSocketKey<A> {
-  remoteAddress: A;
-  rcvId: Uint16;
-
-  constructor(options: IUtpSocketKeyOptions<A>) {
-    (this.remoteAddress = options.remoteAddress), (this.rcvId = options.rcvId);
-  }
+  remoteAddress?: A;
+  rcvId?: Uint16;
 }
 
 export enum AckResult {
@@ -82,40 +67,40 @@ export interface IOutgoingPacket {
 }
 
 export interface IBody {
-    consumed: string,
-    done: boolean
+  consumed: string;
+  done: boolean;
 }
 
 export interface IUtpSocket<A> {
-    remoteAddress: A;
-    state: ConnectionState;
-    direction: ConnectionDirection;
-    socketConfig: SocketConfig;
-    connectionIdRcv: Uint16;
-    connectionIdSnd: Uint16;
-    seqNr: Uint16;
-    ackNr: Uint16;
-    connectionFuture?: Promise<void>;
-    curWindowPackets?: Uint16;
-    outBuffer?: GrowableCircularBuffer<OutgoingPacket>;
-    inBuffer?: GrowableCircularBuffer<Packet>;
-    reorderCount?: Uint16;
-    retransmitTimeout?: Duration;
-    rtt?: Duration;
-    rttVar?: Duration;
-    rto?: Duration;
-    rtoTimeout?: Moment;
-    buffer?: Buffer;
-    checkTimeoutsLoop?: Promise<void>;
-    retransmitCount?: Uint32;
-    closeEvent?: CloseEvent;
-    closeCallbacks?: Promise<void>[];
-    socketKey?: UtpSocketKey<A>;
-    send: SendCallback<A>;
-  }
-  
-  // export type UtpSocketType<A> = IUtpSocket<A>
+  remoteAddress: A;
+  state: ConnectionState;
+  direction: ConnectionDirection;
+  socketConfig: SocketConfig;
+  connectionIdRcv: Uint16;
+  connectionIdSnd: Uint16;
+  seqNr: Uint16;
+  ackNr: Uint16;
+  connectionFuture?: Promise<void>;
+  curWindowPackets?: Uint16;
+  outBuffer?: GrowableCircularBuffer<OutgoingPacket>;
+  inBuffer?: GrowableCircularBuffer<Packet>;
+  reorderCount?: Uint16;
+  retransmitTimeout?: Duration;
+  rtt?: Duration;
+  rttVar?: Duration;
+  rto?: Duration;
+  rtoTimeout?: Moment;
+  buffer?: Buffer;
+  checkTimeoutsLoop?: Promise<void>;
+  retransmitCount?: Uint32;
+  closeEvent?: CloseEvent;
+  closeCallbacks?: Promise<void>[];
+  socketKey?: UtpSocketKey<A>;
+  send: SendCallback<A>;
+}
 
-  export type SocketCloseCallBack = () => void;
+// export type UtpSocketType<A> = IUtpSocket<A>
+
+export type SocketCloseCallBack = () => void;
 
 export type ConnectionError = Error;

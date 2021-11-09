@@ -35,11 +35,11 @@ export class Option<T> {
   }
 }
 
-function none<T>(kind?: TypedPropertyDescriptor<T>): Option<T> {
+export function none<T>(kind?: TypedPropertyDescriptor<T>): Option<T> {
   return new Option({ has: false });
 }
 
-function some<T>(value: T): Option<T> {
+export function some<T>(value: T): Option<T> {
   return new Option<T>({ has: true, value: value });
 }
 

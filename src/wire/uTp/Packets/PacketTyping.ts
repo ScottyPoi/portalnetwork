@@ -1,4 +1,5 @@
 import { Uint16, Uint32, Uint8 } from "@chainsafe/lodestar-types";
+import { PacketHeader } from "./PacketHeader";
 
 export const minimalHeaderSize = 20;
 export const protocolVersion = 1;
@@ -12,7 +13,18 @@ export enum PacketType {
 }
 export type MicroSeconds = Uint32;
 
-export type PacketHeaderV1 = {
+export type PacketHeaderType = {
+  pType: PacketType;
+  version: Uint8;
+  extension: Uint8;
+  connectionId: Uint16;
+  timestamp: MicroSeconds;
+  timestampDiff: MicroSeconds;
+  wndSize: Uint32;
+  seqNr: Uint16;
+  ackNr: Uint16;
+}
+export interface IPacketHeader {
   pType: PacketType;
   version: Uint8;
   extension: Uint8;
@@ -24,7 +36,13 @@ export type PacketHeaderV1 = {
   ackNr: Uint16;
 }
 
+
+
 export interface IPacketOptions {
-    header: PacketHeaderV1,
-    payload: Uint8Array
+    header: PacketHeader,
+    payload: Uint8Array,
   }
+
+export interface IDecodePacketOptions extends IPacketOptions {
+    bytes: Uint8Array
+}
