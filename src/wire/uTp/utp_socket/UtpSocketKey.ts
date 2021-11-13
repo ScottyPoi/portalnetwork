@@ -1,12 +1,13 @@
 import { Uint16 } from "@chainsafe/lodestar-types";
-import { IUtpSocketKeyOptions } from "./utp_socket_typing";
+import { Multiaddr } from "multiaddr";
+import { IUtpSocketKeyOptions } from "./SocketTypes";
 
-export class UtpSocketKey<A> {
-    remoteAddress: A;
+export class UtpSocketKey {
+    remoteAddress: Multiaddr;
     rcvId: Uint16;
   
-    constructor(options: IUtpSocketKeyOptions<A>) {
-      this.remoteAddress = options.remoteAddress as A;
-      this.rcvId = options.rcvId || 0;
+    constructor(options: IUtpSocketKeyOptions) {
+      this.remoteAddress = options.remoteAddress;
+      this.rcvId = options.rcvId;
     }
   }

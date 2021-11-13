@@ -1,24 +1,22 @@
 import { Uint16, Uint32 } from "@chainsafe/lodestar-types";
 import assert from "assert";
 import { inspect } from "util";
-import { GrowableCircularBuffer, Option } from "../growableBuffer";
+import { GrowableCircularBuffer, Option, some } from "../utils/growableBuffer";
 import {
   MicroSeconds,
   Packet,
-  synPacket,
-  ackPacket,
+  createSynPacket,
+  createAckPacket,
   PacketType,
-  dataPacket,
-} from "../Packets/packets";
+  createDataPacket,
+} from "../Packets/Packet";
 import { OutgoingPacket } from "../Packets/OutgoingPacket";
-import { max, sleep } from "../math";
+import { max, sleep } from "../utils/math";
 import {
   Moment,
   ConnectionDirection,
   ConnectionState,
-  SocketConfig,
   Duration,
-  SendCallback,
   IUtpSocket,
   checkTimeoutsLoopInterval,
   AckResult,
@@ -26,114 +24,101 @@ import {
   IBody,
   mtuSize,
   SocketCloseCallBack,
-} from "./utp_socket_typing";
+} from "./SocketTypes";
 import { UtpSocketKey } from "./UtpSocketKey";
+import { Duplex } from "stream";
+import dgram from "dgram";
+import { Multiaddr } from "multiaddr";
 
-export class UtpSocket<A> {
-  remoteAddress: A;
-  state: ConnectionState;
-  direction: ConnectionDirection;
-  socketConfig: SocketConfig;
+export type SocketConfig = typeof defaultSocketConfig;
+
+export const defaultSocketConfig = {
+  buffer: Buffer.alloc(20),
+  _checkTimeoutsLoop: Promise.prototype,
+  closeCallbacks: [],
+  closeEvent: new CloseEvent("close"),
+  connectionFuture: Promise.prototype,
+  curWindowPackets: 0,
+  dataResendsBeforeFailure: 5,
+  inBuffer: new GrowableCircularBuffer<Packet>(),
+  outBuffer: new GrowableCircularBuffer<OutgoingPacket>(),
+  reorderCount: 0,
+  retransmitCount: 0,
+  retransmitTimeout: 1000,
+  rto: 1000,
+  rtoTimeout: 0,
+  rtt: 0,
+  rttVar: 0,
+};
+
+export class UtpSocket extends dgram.Socket {
+  ackNr: Uint16;
+  buffer: Buffer;
+  _checkTimeoutsLoop?: Promise<void>;
+  closeCallbacks: Promise<void>[];
+  closeEvent: CloseEvent;
+  connectionFuture: Promise<void>;
   connectionIdRcv: Uint16;
   connectionIdSnd: Uint16;
-  seqNr: Uint16;
-  ackNr: Uint16;
-  connectionFuture?: Promise<void>;
   curWindowPackets: Uint16;
-  outBuffer: GrowableCircularBuffer<OutgoingPacket>;
+  dataResendsBeforeFailure: number;
+  direction: ConnectionDirection;
   inBuffer: GrowableCircularBuffer<Packet>;
+  outBuffer: GrowableCircularBuffer<OutgoingPacket>;
+  remoteaddress: Multiaddr;
   reorderCount: Uint16;
+  retransmitCount: Uint32;
   retransmitTimeout: Duration;
-  rtt: Duration;
-  rttVar?: Duration;
   rto: Duration;
   rtoTimeout: Moment;
-  buffer: Buffer;
-  checkTimeoutsLoop?: Promise<void>;
-  retransmitCount: Uint32;
-  closeEvent: CloseEvent;
-  closeCallbacks: Promise<void>[];
-  socketKey: UtpSocketKey<A>;
-  send: SendCallback<A>;
+  rtt: Duration;
+  rttVar?: Duration;
+  seqNr: Uint16;
+  state: ConnectionState;
+  // socketKey: UtpSocketKey;
 
-  constructor(options: IUtpSocket<A>) {
-    this.remoteAddress = options.remoteAddress;
-    this.state = options.state;
-    this.direction = options.direction;
-    this.socketConfig = options.socketConfig;
+  constructor(options: IUtpSocket) {
+    super();
+    this.ackNr = options.ackNr;
     this.connectionIdRcv = options.connectionIdRcv;
     this.connectionIdSnd = options.connectionIdSnd;
+    this.direction = options.direction;
+    this.remoteaddress = options.remoteaddress;
     this.seqNr = options.seqNr;
-    this.ackNr = options.ackNr;
-    this.connectionFuture = options.connectionFuture;
-    this.curWindowPackets = options.curWindowPackets || 0;
-    this.outBuffer =
-      options.outBuffer ||
-      new GrowableCircularBuffer({
-        items: new Array<Option<OutgoingPacket>>(),
-        mask: 0,
-      });
-    this.inBuffer = options.inBuffer || new GrowableCircularBuffer();
-    this.reorderCount = options.reorderCount || 0;
-    this.retransmitTimeout = options.retransmitTimeout || 1000;
-    this.rtt = options.rtt || 0;
-    this.rttVar = options.rttVar;
-    this.rto = options.rto || 1000;
-    this.rtoTimeout = options.rtoTimeout || 0;
-    this.buffer = options.buffer || Buffer.alloc(0);
-    this.checkTimeoutsLoop = options.checkTimeoutsLoop;
-    this.retransmitCount = options.retransmitCount || 0;
-    this.closeEvent = options.closeEvent || new CloseEvent("close");
-    this.closeCallbacks = options.closeCallbacks || [];
-    this.socketKey = options.socketKey || new UtpSocketKey({remoteAddress: this.remoteAddress})
-    this.send = options.send;
-  }
-  isOpened(): boolean {
-    return (
-      this.state == ConnectionState.SynSent ||
-      this.state == ConnectionState.SynRecv ||
-      this.state == ConnectionState.Connected ||
-      this.state == ConnectionState.ConnectedFull
-    );
+    this.state = options.state;
+    this.buffer = defaultSocketConfig.buffer;
+    this._checkTimeoutsLoop = defaultSocketConfig._checkTimeoutsLoop;
+    this.closeCallbacks = defaultSocketConfig.closeCallbacks;
+    this.closeEvent = defaultSocketConfig.closeEvent;
+    this.connectionFuture = defaultSocketConfig.connectionFuture;
+    this.curWindowPackets = defaultSocketConfig.curWindowPackets;
+    this.dataResendsBeforeFailure =
+      defaultSocketConfig.dataResendsBeforeFailure;
+    this.inBuffer = defaultSocketConfig.inBuffer;
+    this.outBuffer = defaultSocketConfig.outBuffer;
+    this.reorderCount = defaultSocketConfig.reorderCount;
+    this.retransmitCount = defaultSocketConfig.retransmitCount;
+    this.retransmitTimeout = defaultSocketConfig.retransmitTimeout;
+    this.rto = defaultSocketConfig.rto;
+    this.rtoTimeout = defaultSocketConfig.rtoTimeout;
+    this.rtt = defaultSocketConfig.rtt;
+    this.rttVar = defaultSocketConfig.rttVar;
+    // this.socketKey
   }
 
-  registerOutgoingPacket(oPacket: OutgoingPacket): void {
-    //   ## Adds packet to outgoing buffer and updates all related fields
-    this.outBuffer?.ensureSize(this.seqNr, this.curWindowPackets as number);
-    this.outBuffer?.put(this.seqNr, oPacket);
-    this.seqNr++;
-    this.curWindowPackets++;
+  ackPackets(nrPacketsToAck: Uint16): void {
+    // ## Ack packets in outgoing buffer based on ack number in the received packet
+    var i = 0;
+    while (i < nrPacketsToAck) {
+      let result = this.ackPacketResult(this.seqNr - this.curWindowPackets);
+      result == AckResult.PacketAcked
+        ? this.curWindowPackets
+        : result == AckResult.PacketAlreadyAcked
+        ? this.curWindowPackets
+        : console.log("Tried to ack packet which was not sent yet");
+      i++;
+    }
   }
-
-  async waitForSocketToConnect(): Promise<void> {
-    await this.connectionFuture;
-  }
-
-  async startIncomingSocket() {
-    assert(this.state == ConnectionState.SynRecv);
-    //   # Make sure ack was flushed before movig forward
-    await this.sendAck();
-    this.startTimeoutLoop();
-  }
-
-  isConnected<A>(): boolean {
-    return (
-      this.state == ConnectionState.Connected ||
-      this.state == ConnectionState.ConnectedFull
-    );
-  }
-
-  sendData(data: Uint8Array): Promise<void> {
-    return this.send(this.remoteAddress, data);
-  }
-
-  sendAck(): Promise<void> {
-    //   ## Creates and sends ack, based on current socket state. Acks are different from
-    //   ## other packets as we do not track them in outgoing buffet
-    let ack = ackPacket(this.seqNr, this.connectionIdSnd, this.ackNr, 1048576);
-    return this.sendData(ack.encodePacket());
-  }
-
   ackPacketResult(seqNr: Uint16): AckResult {
     let packetOpt = this.outBuffer.get(seqNr);
     if (packetOpt.isSome()) {
@@ -168,86 +153,6 @@ export class UtpSocket<A> {
       return AckResult.PacketAlreadyAcked;
     }
   }
-
-  ackPackets(nrPacketsToAck: Uint16): void {
-    // ## Ack packets in outgoing buffer based on ack number in the received packet
-    var i = 0;
-    while (i < nrPacketsToAck) {
-      let result = this.ackPacketResult(this.seqNr - this.curWindowPackets);
-      result == AckResult.PacketAcked
-        ? this.curWindowPackets
-        : result == AckResult.PacketAlreadyAcked
-        ? this.curWindowPackets
-        : console.log("Tried to ack packed which was not sent yet");
-      i++;
-    }
-  }
-
-  initializeAckNr(packetSeqNr: Uint16): void {
-    if (this.state == ConnectionState.SynSent) {
-      this.ackNr = packetSeqNr - 1;
-    }
-  }
-
-  sendSyn(): Promise<void> {
-    assert(
-      this.state == ConnectionState.SynSent,
-      "syn can only be send when in SynSent state"
-    );
-    let packet = synPacket(this.seqNr, this.connectionIdRcv, 1048576);
-    console.log(`Sending syn packet ${packet}`);
-    //   # set number of transmissions to 1 as syn packet will be send just after
-    //   # initiliazation
-    let outgoingPacket = new OutgoingPacket({
-      packetBytes: packet.encodePacket(),
-      transmissions: 1,
-      needResend: false,
-      timeSent: Date.now(),
-    });
-    this.registerOutgoingPacket(outgoingPacket);
-    return this.sendData(outgoingPacket.packetBytes);
-  }
-
-  async flushPackets(): Promise<void> {
-    var i: Uint16 = this.seqNr - this.curWindowPackets;
-    while (i != this.seqNr) {
-      // # sending only packet which were not transmitted yet or need a resend
-      let shouldSendPacket = this.outBuffer?.exists(
-        i,
-        (p: OutgoingPacket) => p.transmissions == 0 || p.needResend == true
-      );
-      if (shouldSendPacket) {
-        let toSend = this.outBuffer.get(i).get().setSend();
-        await this.sendData(toSend);
-      }
-      i++;
-    }
-  }
-  markAllPacketAsLost(): void {
-    var i = 0 as Uint16;
-    while (i < this.curWindowPackets) {
-      let packetSeqNr = this.seqNr - 1 - i;
-      if (
-        this.outBuffer.exists(
-          packetSeqNr,
-          (p: OutgoingPacket) => p.transmissions > 0 && p.needResend == false
-        )
-      ) {
-        this.outBuffer.get(packetSeqNr).get().needResend = true;
-        //   # TODO here we should also decrease number of bytes in flight. This should be
-        //   # done when working on congestion control
-      }
-      i++;
-    }
-  }
-
-  shouldDisconnectFromFailedRemote(): boolean {
-    return (
-      (this.state == ConnectionState.SynSent && this.retransmitCount >= 2) ||
-      this.retransmitCount >= this.socketConfig.dataResendsBeforeFailure
-    );
-  }
-
   async checkTimeouts() {
     let currentTime = Date.now();
     //   # flush all packets which needs to be re-send
@@ -309,121 +214,91 @@ export class UtpSocket<A> {
             .get(oldestPacketSeqNr)
             .get()
             .setSend();
-          await this.sendData(dataToSend);
+          await this.sendData(this.connectionIdRcv, dataToSend);
         }
       }
   }
-  updateTimeouts<A>(timeSent: Moment, currentTime: Moment): void {
-    let packetRtt = currentTime - timeSent;
-
-    if (this.rtt == 0) {
-      this.rtt = packetRtt;
-      this.rttVar = packetRtt / 2;
-    } else {
-      let packetRttMicro = packetRtt as MicroSeconds;
-      let rttVarMicro = this.rttVar as MicroSeconds;
-      let rttMicro = this.rtt as MicroSeconds;
-
-      let delta = rttMicro - packetRttMicro;
-
-      let newVar = (rttVarMicro +
-        (Math.abs(delta) - rttVarMicro) / 4) as MicroSeconds;
-      let newRtt = this.rtt - this.rtt / 8 + packetRtt / 8;
-
-      this.rttVar = newVar;
-      this.rtt = newRtt;
-    }
-    //   # according to spec it should be: timeout = max(rtt + rtt_var * 4, 500)
-    //   # but usually spec lags after implementation so milliseconds(1000) is used
-    this.rto = max(this.rtt + this.rttVar * 4, 1000 as MicroSeconds);
+  _close() {
+    this.state = ConnectionState.Destroy;
+    this._checkTimeoutsLoop = Promise.reject<void>();
+    this.closeEvent.stopPropagation();
   }
-  readLoop(body: IBody): void {
-    while (true) {
-      // # TODO error handling
-      const consumed: string = body.consumed;
-      const done: boolean = body.done;
-      this.buffer?.write(consumed as string, this.buffer?.byteLength);
-      if (done) {
-        break;
-      } else {
-        // # TODO add condition to handle socket closing
-        this.buffer?.readUInt32BE();
+
+  async closeWait(): Promise<void> {
+    // # TODO Rething all this when working on FIN packets and proper handling
+    // # of resources
+    this.close();
+    await Promise.allSettled(this.closeCallbacks);
+  }
+
+  // destroy() {
+  //   this.state = ConnectionState.Destroy;
+  //   this.checkTimeoutsLoop.cancel();
+  //   this.closeEvent.fire()
+
+  // }
+
+  // async destroyWait() {
+  //   this.destroy()
+  //   await this.closeEvent.wait()
+  //   await Promise.allSettled(this.closeCallbacks)
+  // }
+  async flushPackets(): Promise<void> {
+    var i: Uint16 = this.seqNr - this.curWindowPackets;
+    while (i != this.seqNr) {
+      // # sending only packet which were not transmitted yet or need a resend
+      let shouldSendPacket = this.outBuffer?.exists(
+        i,
+        (p: OutgoingPacket) => p.transmissions == 0 || p.needResend == true
+      );
+      if (shouldSendPacket) {
+        let toSend = this.outBuffer.get(i).get().setSend();
+        await this.sendData(this.connectionIdRcv, toSend);
       }
+      i++;
     }
-  }
-  resetSendTimeout() {
-    this.retransmitTimeout = this.rto;
-    this.rtoTimeout = Date.now() + this.retransmitTimeout;
   }
   getPacketSize(): number {
     //   # TODO currently returning constant, ultimatly it should be bases on mtu estimates
     return mtuSize;
   }
 
-  async write(data: Uint8Array): Promise<number> {
-    var bytesWritten = 0;
-    // # TODO
-    // # Handle different socket state i.e do not write when socket is full or not
-    // # connected
-    // # Handle growing of send window
-
-    if (data.length == 0) {
-      return bytesWritten;
+  initializeAckNr(packetSeqNr: Uint16): void {
+    if (this.state == ConnectionState.SynSent) {
+      this.ackNr = packetSeqNr - 1;
     }
-    if (this.curWindowPackets == 0) {
-      this.resetSendTimeout();
-    }
-
-    let pSize = this.getPacketSize();
-    let endIndex = data.byteLength;
-    var i = 0;
-    while (i <= endIndex) {
-      let lastIndex = i + pSize - 1;
-      let lastOrEnd = Math.min(lastIndex, endIndex);
-      let dataSlice = data.subarray(i);
-      let _dataPacket = dataPacket(
-        this.seqNr,
-        this.connectionIdSnd,
-        this.ackNr,
-        1048576,
-        dataSlice
-      );
-      this.registerOutgoingPacket(
-        new OutgoingPacket({
-          packetBytes: _dataPacket.encodePacket(),
-          transmissions: 0,
-          needResend: false,
-          timeSent: Date.now(),
-        })
-      );
-      bytesWritten = bytesWritten + dataSlice.length;
-      i = lastOrEnd + 1;
-    }
-    await this.flushPackets();
-    return bytesWritten;
   }
-
-  async read(n: number): Promise<Uint8Array | undefined> {
-    // ## Read all bytes `n` bytes from socket ``socket``.
-    // ##
-    // ## This procedure allocates buffer seq[byte] and return it as result.
-    var bytes = new Uint8Array();
-
-    if (n == 0) {
-      return bytes;
-    }
-
-    // readLoop():
-    // # TODO Add handling of socket closing
-    let count = Math.min(this.buffer.byteLength, n - bytes.length);
-
-    bytes.set(this.buffer.subarray(0, count - 1));
-
-    // (count, len(bytes) == n)
-
-    return bytes;
+  isConnected(): boolean {
+    return (
+      this.state == ConnectionState.Connected ||
+      this.state == ConnectionState.ConnectedFull
+    );
   }
-
+  isOpened(): boolean {
+    return (
+      this.state == ConnectionState.SynSent ||
+      this.state == ConnectionState.SynRecv ||
+      this.state == ConnectionState.Connected ||
+      this.state == ConnectionState.ConnectedFull
+    );
+  }
+  markAllPacketAsLost(): void {
+    var i = 0 as Uint16;
+    while (i < this.curWindowPackets) {
+      let packetSeqNr = this.seqNr - 1 - i;
+      if (
+        this.outBuffer.exists(
+          packetSeqNr,
+          (p: OutgoingPacket) => p.transmissions > 0 && p.needResend == false
+        )
+      ) {
+        this.outBuffer.get(packetSeqNr).get().needResend = true;
+        //   # TODO here we should also decrease number of bytes in flight. This should be
+        //   # done when working on congestion control
+      }
+      i++;
+    }
+  }
   // # Check how many packets are still in the out going buffer, usefull for tests or
   // # debugging.
   // # It throws assertion error when number of elements in buffer do not equal kept counter
@@ -451,6 +326,115 @@ export class UtpSocket<A> {
     }
   }
 
+  registerOutgoingPacket(oPacket: OutgoingPacket): void {
+    //   ## Adds packet to outgoing buffer and updates all related fields
+    this.outBuffer?.ensureSize(this.seqNr, this.curWindowPackets as number);
+    this.outBuffer?.put(this.seqNr, oPacket);
+    this.seqNr++;
+    this.curWindowPackets++;
+  }
+  sendAck(): void {
+    let ack = createAckPacket(this.seqNr, this.connectionIdSnd, this.ackNr);
+    return this.sendData(this.connectionIdSnd, ack.encodePacket());
+  }
+  sendData(connectionId: number, data: Uint8Array): void {
+    return this.send(data, connectionId, data.length);
+  }
+
+  async startIncomingSocket() {
+    assert(this.state == ConnectionState.SynRecv);
+    //   # Make sure ack was flushed before movig forward
+    await this.sendAck();
+    this.startTimeoutLoop();
+  }
+
+  sendSyn(): void {
+    assert(
+      this.state == ConnectionState.SynSent,
+      "syn can only be send when in SynSent state"
+    );
+    let packet = createSynPacket(this.seqNr, this.connectionIdRcv, 1048576);
+    console.log(`Sending syn packet ${packet}`);
+    //   # set number of transmissions to 1 as syn packet will be send just after
+    //   # initiliazation
+    let outgoingPacket = new OutgoingPacket({
+      packetBytes: packet.encodePacket(),
+      transmissions: 1,
+      needResend: false,
+      timeSent: Date.now(),
+    });
+    this.registerOutgoingPacket(outgoingPacket);
+    return this.sendData(this.connectionIdRcv, outgoingPacket.packetBytes);
+  }
+
+  shouldDisconnectFromFailedRemote(): boolean {
+    return (
+      (this.state == ConnectionState.SynSent && this.retransmitCount >= 2) ||
+      this.retransmitCount >= this.dataResendsBeforeFailure
+    );
+  }
+
+  updateTimeouts(timeSent: Moment, currentTime: Moment): void {
+    let packetRtt = currentTime - timeSent;
+
+    if (this.rtt == 0) {
+      this.rtt = packetRtt;
+      this.rttVar = packetRtt / 2;
+    } else {
+      let packetRttMicro = packetRtt as MicroSeconds;
+      let rttVarMicro = this.rttVar as MicroSeconds;
+      let rttMicro = this.rtt as MicroSeconds;
+      let delta = rttMicro - packetRttMicro;
+      let newVar = (rttVarMicro +
+        (Math.abs(delta) - rttVarMicro) / 4) as MicroSeconds;
+      let newRtt = this.rtt - this.rtt / 8 + packetRtt / 8;
+      this.rttVar = newVar;
+      this.rtt = newRtt;
+    }
+    //   # according to spec it should be: timeout = max(rtt + rtt_var * 4, 500)
+    //   # but usually spec lags after implementation so milliseconds(1000) is used
+    this.rto = max(this.rtt + this.rttVar * 4, 1000);
+  }
+  readLoop(body: IBody): void {
+    while (true) {
+      // # TODO error handling
+      const consumed: string = body.consumed;
+      const done: boolean = body.done;
+      this.buffer?.write(consumed as string, this.buffer?.byteLength);
+      if (done) {
+        break;
+      } else {
+        // # TODO add condition to handle socket closing
+        this.buffer?.readUInt32BE();
+      }
+    }
+  }
+  resetSendTimeout() {
+    this.retransmitTimeout = this.rto;
+    this.rtoTimeout = Date.now() + this.retransmitTimeout;
+  }
+
+  async read(n: number): Promise<Uint8Array | undefined> {
+    // ## Read all bytes `n` bytes from socket ``socket``.
+    // ##
+    // ## This procedure allocates buffer seq[byte] and return it as result.
+    var bytes = new Uint8Array();
+
+    if (n == 0) {
+      return bytes;
+    }
+
+    // readLoop():
+    // # TODO Add handling of socket closing
+    let count = Math.min(this.buffer.byteLength, n - bytes.length);
+
+    bytes.set(this.buffer.subarray(0, count - 1));
+
+    // (count, len(bytes) == n)
+
+    return bytes;
+  }
+
   async startOutgoingSocket(): Promise<void> {
     assert(this.state == ConnectionState.SynSent);
     //   # TODO add callback to handle errors and cancellation i.e unregister socket on
@@ -459,7 +443,6 @@ export class UtpSocket<A> {
     await this.sendSyn();
     this.startTimeoutLoop();
   }
-
   async processPacket(p: Packet) {
     // ## Updates socket state based on received packet, and sends ack when necessary.
     let pkSeqNr = p.header.seqNr;
@@ -574,22 +557,9 @@ export class UtpSocket<A> {
       console.log("Received ST_SYN on known socket");
     }
   }
-
-  close() {
-    //   # TODO Rething all this when working on FIN packets and proper handling
-    //   # of resources
-    this.state = ConnectionState.Destroy;
-    this.checkTimeoutsLoop = Promise.reject<void>();
-    this.closeEvent.stopPropagation();
+  registerCloseCallback(cb: SocketCloseCallBack) {
+    this.closeCallbacks.push(this.setCloseCallback(cb));
   }
-
-  async closeWait(): Promise<void> {
-    // # TODO Rething all this when working on FIN packets and proper handling
-    // # of resources
-    this.close();
-    await Promise.allSettled(this.closeCallbacks);
-  }
-
   async setCloseCallback(cb: SocketCloseCallBack): Promise<void> {
     // ## Set callback which will be called whenever the socket is permanently closed
     try {
@@ -600,16 +570,55 @@ export class UtpSocket<A> {
     }
   }
 
-  registerCloseCallback(cb: SocketCloseCallBack) {
-    this.closeCallbacks.push(this.setCloseCallback(cb));
+  async startTimeoutLoop(): Promise<void> {
+    this._checkTimeoutsLoop = this.checkTimeoutsLoop(this);
   }
-
-  startTimeoutLoop(): void {
-    this.checkTimeoutsLoop = checkTimeoutsLoop(this);
+  async waitForSocketToConnect(): Promise<void> {
+    await this.connectionFuture;
   }
-}
+  async _write(data: Uint8Array): Promise<number> {
+    var bytesWritten = 0;
+    // # TODO
+    // # Handle different socket state i.e do not write when socket is full or not
+    // # connected
+    // # Handle growing of send window
 
-async function checkTimeoutsLoop<A>(socket: UtpSocket<A>): Promise<void> {
+    if (data.length == 0) {
+      return bytesWritten;
+    }
+    if (this.curWindowPackets == 0) {
+      this.resetSendTimeout();
+    }
+
+    let pSize = this.getPacketSize();
+    let endIndex = data.byteLength;
+    var i = 0;
+    while (i <= endIndex) {
+      let lastIndex = i + pSize - 1;
+      let lastOrEnd = Math.min(lastIndex, endIndex);
+      let dataSlice = data.subarray(i);
+      let _dataPacket = createDataPacket(
+        this.seqNr,
+        this.connectionIdSnd,
+        this.ackNr,
+        1048576,
+        dataSlice
+      );
+      this.registerOutgoingPacket(
+        new OutgoingPacket({
+          packetBytes: _dataPacket.encodePacket(),
+          transmissions: 0,
+          needResend: false,
+          timeSent: Date.now(),
+        })
+      );
+      bytesWritten = bytesWritten + dataSlice.length;
+      i = lastOrEnd + 1;
+    }
+    await this.flushPackets();
+    return bytesWritten;
+  }
+  async checkTimeoutsLoop(socket: UtpSocket): Promise<void> {
   //   ## Loop that check timeoutsin the socket.
   try {
     while (true) {
@@ -619,4 +628,5 @@ async function checkTimeoutsLoop<A>(socket: UtpSocket<A>): Promise<void> {
   } catch (error) {
     console.log("checkTimeoutsLoop canceled");
   }
+}
 }

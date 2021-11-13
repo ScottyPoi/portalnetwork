@@ -1,20 +1,18 @@
 import { Uint16 } from "@chainsafe/lodestar-types";
-import { randUint16 } from "../math";
-import { UtpSocket } from "./utp_socket";
-import { ConnectionDirection, ConnectionState, SendCallback, SocketConfig } from "./utp_socket_typing";
+import { Multiaddr } from "multiaddr";
+import { randUint16 } from "../utils/math";
+import { SocketConfig, UtpSocket } from "./Utp_socket";
+import { ConnectionDirection, ConnectionState, SendCallback} from "./SocketTypes";
 
-export function initIncomingSocket<A>(
-    to: A,
-    snd: SendCallback<A>,
+export function initIncomingSocket(
+    to: Multiaddr,
     cfg: SocketConfig,
     connectionId: Uint16,
     ackNr: Uint16
-    //   rng: var BrHmacDrbgContext
-  ): UtpSocket<A> {
+  ): UtpSocket {
     let initialSeqNr = randUint16();
-    return new UtpSocket<A>({
-      remoteAddress: to,
-      send: snd,
+    return new UtpSocket({
+      remoteaddress: to,
       state: ConnectionState.SynRecv,
       socketConfig: cfg,
       direction: ConnectionDirection.Ingoing,

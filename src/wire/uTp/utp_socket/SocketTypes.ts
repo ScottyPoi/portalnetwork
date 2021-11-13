@@ -1,8 +1,12 @@
 import { Uint16, Uint32 } from "@chainsafe/lodestar-types";
-import { GrowableCircularBuffer } from "../growableBuffer";
-import { Packet } from "../Packets/packets";
+import { GrowableCircularBuffer } from "../utils/growableBuffer";
+import { Packet } from "../Packets/Packet";
 import { OutgoingPacket } from "../Packets/OutgoingPacket";
-import { UtpSocketKey } from "./UtpSocketKey";
+// import { UtpSocketKey } from "./UtpSocketKey";
+// import {SocketConfig} from './utp_socket'
+import dgram from 'dgram';
+import { SocketConfig } from './Utp_socket'
+import { Multiaddr } from "multiaddr";
 
 export const reorderBufferMaxSize: number = 1024;
 //   # Maximal number of payload bytes per packet. Total packet size will be equal to
@@ -37,9 +41,9 @@ export enum ConnectionDirection {
   Ingoing,
 }
 
-export interface IUtpSocketKeyOptions<A> {
-  remoteAddress?: A;
-  rcvId?: Uint16;
+export interface IUtpSocketKeyOptions {
+  remoteAddress: Multiaddr;
+  rcvId: Uint16;
 }
 
 export enum AckResult {
@@ -48,16 +52,21 @@ export enum AckResult {
   PacketNotSentYet,
 }
 
-export type SendCallback<A> = (to: A, data: Uint8Array) => Promise<void>;
+export type SendCallback = (to: Multiaddr, data: Uint8Array) => void;
 
-export type SocketConfig = {
-  initialSynTimeout: Duration;
-  dataResendsBeforeFailure: Uint16;
+export interface ISocketConfigOptions {
+  initialSynTimeout?: Duration;
+  dataResendsBeforeFailure?: Uint16;
 };
 
 export type Miliseconds = Uint32;
 export type Moment = Miliseconds;
 export type Duration = Miliseconds;
+
+export interface IBody {
+  consumed: string;
+  done: boolean;
+}
 
 export interface IOutgoingPacket {
   packetBytes: Uint8Array;
@@ -66,40 +75,25 @@ export interface IOutgoingPacket {
   timeSent: Moment;
 }
 
-export interface IBody {
-  consumed: string;
-  done: boolean;
-}
-
-export interface IUtpSocket<A> {
-  remoteAddress: A;
-  state: ConnectionState;
-  direction: ConnectionDirection;
-  socketConfig: SocketConfig;
+export interface IUtpSocket {
+  remoteaddress: Multiaddr;
+  ackNr: Uint16;
   connectionIdRcv: Uint16;
   connectionIdSnd: Uint16;
+  direction: ConnectionDirection;
   seqNr: Uint16;
-  ackNr: Uint16;
-  connectionFuture?: Promise<void>;
-  curWindowPackets?: Uint16;
-  outBuffer?: GrowableCircularBuffer<OutgoingPacket>;
-  inBuffer?: GrowableCircularBuffer<Packet>;
-  reorderCount?: Uint16;
-  retransmitTimeout?: Duration;
-  rtt?: Duration;
-  rttVar?: Duration;
-  rto?: Duration;
-  rtoTimeout?: Moment;
-  buffer?: Buffer;
-  checkTimeoutsLoop?: Promise<void>;
-  retransmitCount?: Uint32;
-  closeEvent?: CloseEvent;
-  closeCallbacks?: Promise<void>[];
-  socketKey?: UtpSocketKey<A>;
-  send: SendCallback<A>;
+  socketConfig: SocketConfig;
+  state: ConnectionState;
 }
 
-// export type UtpSocketType<A> = IUtpSocket<A>
+export interface ISocketOptions {
+  port: number,
+  host: string,
+  socket: dgram.Socket,
+  syn: Packet | null
+}
+
+// export type UtpSocketType<T> = IUtpSocket<T>
 
 export type SocketCloseCallBack = () => void;
 

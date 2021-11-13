@@ -1,7 +1,8 @@
 import { Uint16, Uint32, Uint8 } from "@chainsafe/lodestar-types";
 import { Stream} from "stream";
 import internal = require("stream");
-import { IPacketHeader, MicroSeconds, PacketHeaderType, PacketType } from "./PacketTyping";
+import { VERSION } from "../utils/constants";
+import { DEFAULT_WINDOW_SIZE, IPacketHeader, MicroSeconds, PacketHeaderType, PacketType } from "./PacketTyping";
 
 
 
@@ -18,15 +19,15 @@ export class PacketHeader {
   
     constructor(options: IPacketHeader) {
         this.pType = options.pType;
-        this.version = options.version;
-        this.extension = options.extension;
-        this.connectionId = options.connectionId;
-        this.timestamp = options.timestamp;
-        this.timestampDiff = options.timestampDiff;
-        this.wndSize = options.wndSize;
-        this.seqNr = options.seqNr;
+        this.version = options.version || VERSION;
+        this.extension = 0
+        this.connectionId = options.connectionId
+        this.timestamp = options.timestamp || Date.now()
+        this.timestampDiff = options.timestampDiff || 0
+        this.wndSize = options.wndSize || DEFAULT_WINDOW_SIZE
+        this.seqNr = options.seqNr
         this.ackNr = options.ackNr;
-    }
+    } 
     OutputStream: internal.Duplex = new Stream.Duplex()
 encodeTypeVer(): Uint8 {
     let typeVer: Uint8 = 0;
@@ -39,7 +40,6 @@ encodeHeaderStream() {
     try {
         this.OutputStream.write(this.encodeTypeVer);
         this.OutputStream.write(this.extension);
-        
         this.OutputStream.write(this.connectionId.toString(16));
         this.OutputStream.write(this.timestamp.toString(16));
         this.OutputStream.write(this.timestampDiff.toString(16));
