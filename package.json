@@ -8,14 +8,14 @@
     "dev": "tsc --declaration --outDir dist --watch",
     "build": "tsc --declaration --outDir dist",
     "docs": "typedoc src/index.ts",
-    "test": "tape -r  ts-node/register 'src/tests/**/*.spec.ts'"
+    "test": "tape -r  ts-node/register 'tests/**/*.spec.ts'"
   },
   "types": "dist/index.d.ts",
   "author": "acolytec3",
   "license": "MIT",
   "dependencies": {
-    "@chainsafe/discv5": "github:acolytec3/discv5#9b38568381bd02d0733e9cc8304ea50ed75130b6",
     "@chainsafe/lodestar-types": "^0.31.0",
+    "@chainsafe/discv5": "github:acolytec3/discv5#9b182f0a54a29cfebdec565af5d20c93794956c3",
     "@chainsafe/ssz": "^0.8.19",
     "@types/bn.js": "^5.1.0",
     "@types/node": "^16.11.6",
@@ -32,6 +32,7 @@
   "devDependencies": {
     "@types/debug": "^4.1.7",
     "@types/tape": "^4.13.2",
+    "ts-node": "^10.4.0",
     "tslib": "^2.3.1",
     "typedoc": "^0.22.5",
     "typedoc-plugin-markdown": "^3.11.3",
