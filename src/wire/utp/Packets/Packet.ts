@@ -5,7 +5,7 @@ import {
   DEFAULT_WINDOW_SIZE,
 } from "./PacketTyping";
 import { PacketHeader } from "./PacketHeader";
-import { Uint16, Uint32 } from ".";
+import { SelectiveAckHeader, Uint16, Uint32 } from ".";
 import { packetToBuffer } from "..";
 import { debug } from "debug";
 
@@ -13,7 +13,7 @@ const log = debug("<uTP>")
 
 
 export class Packet {
-  header: PacketHeader;
+  header: PacketHeader | SelectiveAckHeader;
   payload: Uint8Array;
   sent: number;
   size: number;
@@ -21,7 +21,7 @@ export class Packet {
     this.header = options.header;
     this.payload = options.payload;
     this.sent = 0;
-    this.size = 20 + this.payload.length;
+    this.size = this.header.length + this.payload.length;
   }
 
   encodePacket(): Buffer {
@@ -60,6 +60,25 @@ export function createAckPacket(
       wndSize: DEFAULT_WINDOW_SIZE,
       timestampDiff: rtt_var
     });
+    
+    log("Creating ST_STATE Packet...")
+    const packet: Packet = new Packet({ header: h, payload: new Uint8Array(0) });
+    return packet;
+  }
+export function createSelectiveAckPacket(
+  seqNr: Uint16,
+  sndConnectionId: Uint16,
+  ackNr: Uint16,
+  rtt_var: number
+  ): Packet {
+    let h: SelectiveAckHeader = new SelectiveAckHeader({
+      pType: PacketType.ST_STATE,
+      connectionId: sndConnectionId,
+      seqNr: seqNr,
+      ackNr: ackNr,
+      wndSize: DEFAULT_WINDOW_SIZE,
+      timestampDiff: rtt_var
+    }, new Uint32Array(1));
     
     log("Creating ST_STATE Packet...")
     const packet: Packet = new Packet({ header: h, payload: new Uint8Array(0) });
