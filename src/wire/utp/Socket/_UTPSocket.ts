@@ -4,9 +4,11 @@ import {
   createFinPacket,
   createResetPacket,
   createSynPacket,
+  DELAY_TARGET,
   Packet,
   PacketType,
   randUint16,
+  UtpProtocol,
 } from "..";
 import { ConnectionState } from ".";
 
@@ -26,8 +28,10 @@ PacketSent.addEventListener("Packet Sent", (id) => {
 });
 
 export class _UTPSocket extends EventEmitter {
+  remoteAddress: string
   seqNr: number;
   client: Discv5;
+  utp: UtpProtocol
   ackNr: number;
   sndConnectionId: number;
   rcvConnectionId: number;
@@ -37,9 +41,15 @@ export class _UTPSocket extends EventEmitter {
   state: ConnectionState;
   rtt: number;
   rtt_var: number;
-  constructor(client: Discv5) {
+  baseDelay: number;
+  ourDelay: number;
+  sendRate: number;
+  CCONTROL_TARGET: number;
+  constructor(utp: UtpProtocol, remoteAddress: string) {
     super();
-    this.client = client;
+    this.remoteAddress = remoteAddress
+    this.utp = utp
+    this.client = utp.client;
     this.seqNr = 1;
     this.ackNr = 0;
     this.rcvConnectionId = randUint16();
@@ -51,6 +61,10 @@ export class _UTPSocket extends EventEmitter {
     this.state = ConnectionState.SynSent;
     this.rtt = 0;
     this.rtt_var = 0;
+    this.baseDelay=0;
+    this.ourDelay=0;
+    this.sendRate=0;
+    this.CCONTROL_TARGET=DELAY_TARGET;
   }
 
   validatePacketSize(packet: Packet): boolean {
@@ -76,11 +90,10 @@ export class _UTPSocket extends EventEmitter {
     seqNr: number,
     sndConnectionId: number,
     ackNr: number,
-    dstId: string
   ): Promise<void> {
     const packet = createAckPacket(seqNr, sndConnectionId, ackNr, this.rtt_var);
     log(`Sending ST_STATE packet ${packet.encodePacket().toString('hex')}`);
-    await this.sendPacket(packet, dstId, PacketType.ST_STATE);
+    await this.sendPacket(packet, this.remoteAddress, PacketType.ST_STATE);
   }
 
   // async sendAcceptPacket(packet: Packet, dstId: string) {
@@ -153,4 +166,12 @@ export class _UTPSocket extends EventEmitter {
 
     this.rtt += (packetRTT - this.rtt) / 8;
   }
+
+
+
+
+
+
+
+
 }
