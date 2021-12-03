@@ -5,9 +5,9 @@ import { DEFAULT_WINDOW_SIZE, IPacketHeader, MicroSeconds, PacketType } from "./
 export class Extension {
   type: number;
   len: number;
-  bitmask: Uint32Array;
+  bitmask: Uint8Array;
 
-  constructor(type: number, bitmask: Uint32Array) {
+  constructor(type: number, bitmask: Uint8Array) {
     this.type = type;
     this.bitmask = bitmask;
     this.len = this.bitmask.length
@@ -15,9 +15,12 @@ export class Extension {
 }
 
 export class SelectiveAckExtension extends Extension {
-  constructor(bitmask: Uint32Array) {
+  constructor(bitmask: Uint8Array) {
     super(1, bitmask)
+    this.bitmask = bitmask
   }
+
+  public static BITMAP = [ 1, 2, 4, 8, 16, 32, 64, 128];
 }
 
 
@@ -70,7 +73,7 @@ export class PacketHeader {
 
 export class SelectiveAckHeader extends PacketHeader {
   selectiveAckExtension: SelectiveAckExtension;
-  constructor(options: IPacketHeader, bitmask: Uint32Array) {
+  constructor(options: IPacketHeader, bitmask: Uint8Array) {
     super(options);
     this.extension = 1;
     this.length = this.encodeHeaderStream().length
