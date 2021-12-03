@@ -27,9 +27,9 @@ export enum ConnectionState {
   SynSent,
   SynRecv,
   Connected,
-  ConnectedFull,
   Reset,
-  Destroy,
+  Closed,
+  GotFin
 }
 
 export enum ConnectionDirection {
