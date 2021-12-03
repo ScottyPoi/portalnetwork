@@ -290,7 +290,7 @@ export class _UTPSocket extends EventEmitter {
   }
 
   read(dst: Buffer) {
-    let readFuture: UtpReadFuture = new UtpReadFuture()
+    let readFuture: UtpReadFuture = new UtpReadFuture(dst)
     const reader = new utpReadingRunnable(this, dst, readFuture);
     reader.start();
     return readFuture
